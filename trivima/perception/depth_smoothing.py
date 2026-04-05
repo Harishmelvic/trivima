@@ -60,25 +60,24 @@ def _bilateral_cv2(
     """OpenCV bilateral filter — fast C++ implementation."""
     import cv2
 
-    # Ensure guide is uint8 for cv2
-    if rgb_guide.dtype != np.uint8:
-        guide_u8 = np.clip(rgb_guide * 255, 0, 255).astype(np.uint8)
+    # Convert guide to float32 to match depth dtype (ximgproc requires same depth)
+    if rgb_guide.dtype == np.uint8:
+        guide_f32 = rgb_guide.astype(np.float32)
+    elif rgb_guide.max() <= 1.0:
+        guide_f32 = (rgb_guide * 255.0).astype(np.float32)
     else:
-        guide_u8 = rgb_guide
+        guide_f32 = rgb_guide.astype(np.float32)
 
-    # cv2.bilateralFilter works on single-channel or 3-channel
-    # We use the joint bilateral trick: filter depth guided by RGB edges
-    # cv2 doesn't have native joint bilateral, so we use ximgproc if available
     try:
         smoothed = cv2.ximgproc.jointBilateralFilter(
-            joint=guide_u8,
+            joint=guide_f32,
             src=depth,
-            d=-1,  # compute from sigmaSpace
+            d=-1,
             sigmaColor=color_sigma,
             sigmaSpace=spatial_sigma,
         )
         return smoothed
-    except AttributeError:
+    except (AttributeError, cv2.error):
         # Fallback: standard bilateral on depth (no RGB guide)
         # Less effective but still reduces noise
         d = int(np.ceil(spatial_sigma * 2)) * 2 + 1

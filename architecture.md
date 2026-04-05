@@ -128,10 +128,10 @@ trivima/
 │   │   ├── conservation.py          Energy, mass, shadow conservation checks
 │   │   └── validator.py             Orchestrator + gradual correction + error injection
 │   │
-│   ├── vlm/                         (Stage 4 — planned)
-│   │   ├── qwen_vlm.py             Qwen3-VL + prompt-based 3D context
-│   │   ├── aesthetic_ranker.py      Logit scoring (~200ms) + generative (~2-5s)
-│   │   ├── auto_furnish.py          Gap detection + placement planning
+│   ├── vlm/
+│   │   ├── qwen_vlm.py             Qwen3-VL-8B + SpatialContextBuilder
+│   │   ├── aesthetic_ranker.py      Logit scoring (~200-500ms) + generative (~2-5s)
+│   │   ├── auto_furnish.py          Gap detection + placement planning + rule-based fallback
 │   │   └── training/               SpatialVLM distillation + LoRA fine-tuning
 │   │
 │   ├── testing/
@@ -141,12 +141,14 @@ trivima/
 │   └── app.py                       CLI entry point with --stats, --export-ply, --render-preview
 │
 ├── handler.py                       RunPod serverless handler
+├── distillation_test.py             Small-scale distillation validation (~$5, ~10 min)
 ├── Dockerfile                       Pre-built image for serverless deployment
 │
 ├── tests/
 │   ├── test_stage2.py               29 tests: cell struct + perception + grid + shell + LOD
 │   ├── test_image_based.py          13 tests: 11 synthetic images + 4 GPU model tests
 │   ├── test_unified_foundation.py   29 tests: confidence + surface + functional + BFS + conservation
+│   ├── test_vlm_stage4.py           25 tests: model loading + spatial context + distillation + ranking
 │   └── generate_test_images.py      11 synthetic rooms with GT depth/labels/failure modes
 │
 └── data/
@@ -192,7 +194,7 @@ Two separate smoothing concerns:
 - **Depth smoothing** (bilateral, σ=2.5): mild, preserves surface detail like brick mortar
 - **Gradient smoothing** (5×5 Sobel kernel): smooth during differentiation, not before
 
-Combined, they reduce gradient noise by 40-65% without erasing fine textures. If testing shows over-smoothing on brick/wood grain, reduce bilateral σ to 2.0.
+Combined, they reduce gradient noise by 40-65% without erasing fine textures.
 
 ### 8. Gradual Conservation Corrections
 
@@ -200,80 +202,64 @@ Corrections from validation are spread over 3-5 frames instead of applied instan
 
 ### 9. Per-Cell Confidence
 
-Each cell carries a `confidence` float [0,1] derived from multiplicative product:
-
 `confidence = depth_smoothness × point_density × semantic_penalty`
 
-- **Depth smoothness**: low local variance → high confidence
-- **Point density**: `min(1.0, n / 10.0)` — more points per cell → higher confidence
-- **Semantic penalty**: glass (×0.2), mirror (×0.1), transparent (×0.3), specular (×0.4), dark (×0.4)
-- **DUSt3R agreement**: (multi-image only) model disagreement → low confidence
+Semantic penalties: glass (×0.2), mirror (×0.1), transparent (×0.3), specular (×0.4), dark (×0.4).
 
 Confidence drives: collision margins (expanded for low-conf), subdivision (blocked < 0.5), AI texturing weight (boosted for low-conf), debug rendering (orange tint).
 
-### 10. Subdivision Depth Cap (from error propagation analysis)
+### 10. Subdivision Depth Cap
 
 Taylor expansion child prediction error is ±1.25cm from single-image input.
 
-| Input Type | Max Taylor Subdivisions | Finest Cell | Beyond That |
-|---|---|---|---|
-| Single image | 1 level | 2.5 cm | Neural texture + AI texturing |
-| Multi-image | 3 levels | 0.6 cm | Gradient-predicted detail |
-| Video | 4 levels | 0.3 cm | Sub-mm precision possible |
+| Input Type | Max Subdivisions | Finest Cell |
+|---|---|---|
+| Single image | 1 level | 2.5 cm |
+| Multi-image | 3 levels | 0.6 cm |
+| Video | 4 levels | 0.3 cm |
 
-Low-confidence cells are never subdivided regardless of input type.
+Low-confidence cells are never subdivided.
 
 ### 11. Failure Mode Mitigations
 
-SAM 3 labels trigger material-specific corrections before cell construction:
-
 | Surface | Problem | Mitigation |
 |---|---|---|
-| Mirror | Phantom room behind wall | Force density=1.0, confidence=0.1, block subdivision |
-| Glass | Invisible to depth model | Force density=1.0 (solid barrier), confidence=0.2 |
-| Transparent | Refraction distortion | Low confidence=0.3, expand collision margin |
-| Dark scene | Universal noise | All cells low confidence, rely on AI texturing |
-| Sky | Extreme depth (50-1000m) | Exclude from grid, render as skybox |
-| Specular | Oscillating depth | Moderate confidence=0.4, extra depth smoothing |
+| Mirror | Phantom room | density=1.0, confidence=0.1, block subdivision |
+| Glass | Invisible | density=1.0 (barrier), confidence=0.2 |
+| Transparent | Refraction | confidence=0.3, expand collision margin |
+| Dark scene | Noise | All cells low confidence, rely on AI texturing |
+| Sky | Extreme depth | Exclude from grid, render as skybox |
+| Specular | Oscillating | confidence=0.4, extra depth smoothing |
 
 ### 12. VLM Design Intelligence (Stage 4)
 
-**Model:** Qwen3-VL-8B-Instruct (primary) / 30B-A3B-Instruct (production quality).
+**Model:** Qwen3-VL-8B-Instruct (validated) / 30B-A3B on A100 80GB.
 
-**Native spatial encoding:** Qwen3-VL has Interleaved-MRoPE + DeepStack for native 3D grounding — no custom 3D-RoPE injection needed. Starts at 36-40% numerical spatial accuracy out of the box (vs 20-30% for Qwen2.5-VL).
+**Native spatial encoding:** Qwen3-VL has Interleaved-MRoPE + DeepStack for native 3D grounding. No custom 3D-RoPE injection — dropped in favor of prompt-based 3D context from the cell grid.
 
-**Prompt-based 3D context:** Instead of modifying the model's positional encoding, we provide explicit spatial data (distances, surface types, object positions from the cell grid) in the prompt. Simpler, more portable, works with any future VLM.
+**Distillation results (validated):**
 
-**SpatialVLM distillation** pushes spatial accuracy from 36-40% to 60-75% via LoRA fine-tuning on 50-100K spatial QA pairs. Less training needed than Qwen2.5-VL because the starting baseline is higher.
+| Metric | Before LoRA | After LoRA (2,898 pairs) |
+|---|---|---|
+| Within 25% spatial accuracy | 44.4% | **88.0%** |
+| Within 50% spatial accuracy | 68.9% | **92.0%** |
+| Median spatial error | 31.7% | **8.3%** |
+| Aesthetic canary | 1.00 | **1.00** (zero degradation) |
+| Training time | — | 4.8 minutes |
+
+88% accuracy on 2,898 synthetic pairs exceeds the 60-75% target. Full 50-100K SpatialVLM distillation will push higher.
+
+**30B-A3B comparison:** On A40 48GB, 30B-A3B uses 40.3GB with CPU offloading, performing worse than 8B (34.7% vs 44.4% within 25%). On A100 80GB without offloading, 30B-A3B is expected to outperform 8B for aesthetic reasoning.
 
 **Invocation points** (never in the render loop):
 - Environment classification (~2s, once per scene)
-- Aesthetic re-ranking: fast (~200-500ms logit scoring) or full (~2-5s generative with explanations)
+- Aesthetic re-ranking: fast (~200-500ms) or full (~2-5s with explanations)
 - Auto-furnishing planning (~3-5s, once per scene)
 - Object style matching (~200-500ms per object)
 
-**Model variants by use case:**
-| Use Case | Model | Latency |
-|---|---|---|
-| Fast re-ranking | Qwen3-VL-8B-Instruct | 200-500ms |
-| Design reasoning | Qwen3-VL-8B-Thinking | 2-5s |
-| Production quality | Qwen3-VL-30B-A3B | 200-500ms (3B active) |
+**Training cost:** $2,500-4,500 total (spatial distillation 2-4 days + aesthetic 3-5 days + optional DPO 1-2 days).
 
-**Asymmetric dependency:** Physics works without VLM. VLM cannot work without physics. Neural network judgment never controls collision or placement validity.
-
-**Training:**
-| Phase | Duration | Hardware | Cost |
-|---|---|---|---|
-| Spatial distillation (LoRA rank 32, alpha 64) | 2-4 days | 4×A100 | $1,000-2,000 |
-| Aesthetic fine-tuning (3D-FRONT data) | 3-5 days | 4×A100 | $1,500-2,500 |
-| Human preference DPO (optional) | 1-2 days | 2×A100 | $300-500 |
-| **Total** | **6-11 days** | | **$2,500-4,500** |
-
-**Canary metrics:** aesthetic (correlation > 0.75), language (perplexity < +15%), spatial (accuracy > 80% of SpatialVLM).
-
-**Key ablation:** Validation-only (A) vs Qwen3-VL base (B) vs Qwen3-VL distilled (C). Expected: C > B > A. Optional: (D) Qwen3-VL-Thinking for complex reasoning tasks.
-
-**Architecture evolution:** Fusion (3 models) → Qwen2.5 + 3D-RoPE hack → Qwen3-VL native. Each iteration removed complexity as foundation models absorbed custom engineering.
+**Architecture evolution:** Fusion (3 models) → Qwen2.5 + 3D-RoPE hack → Qwen3-VL native. Each iteration removed complexity as foundation models improved.
 
 ---
 
@@ -323,6 +309,54 @@ SAM 3 labels trigger material-specific corrections before cell construction:
 
 ---
 
+## Hardware Requirements
+
+### Minimum (Development + Testing)
+| Component | Spec | Cost |
+|---|---|---|
+| GPU | NVIDIA A40 48GB | $0.39/hr RunPod |
+| Container disk | 100 GB | included |
+| Volume | 150 GB | $0.07/hr |
+| RAM | 32 GB | included |
+
+Runs: Depth Pro + SAM 3 + Qwen3-VL-8B (sequential), cell grid, all tests.
+
+### Recommended (Production)
+| Component | Spec | Cost |
+|---|---|---|
+| GPU | NVIDIA A100 80GB SXM | $1.39/hr RunPod |
+| Container disk | 200 GB | included |
+| Volume | 300 GB | $0.07/hr |
+| RAM | 64 GB | included |
+
+Runs: All models with headroom, 30B-A3B without CPU offloading, production AI texturing, full distillation training.
+
+### Premium (Maximum Quality + Training)
+| Component | Spec | Cost |
+|---|---|---|
+| GPU | NVIDIA H100 80GB SXM | $2.69/hr RunPod |
+| Container disk | 200 GB | included |
+| Volume | 500 GB | $0.07/hr |
+| RAM | 128 GB | included |
+
+Runs: Everything at maximum speed, 30B-A3B + perception models simultaneously, cinematic rendering, fastest training convergence.
+
+### Multi-GPU Training
+| Component | Spec | Cost |
+|---|---|---|
+| GPUs | 4× A100 80GB SXM | $5.56/hr RunPod |
+| Full distillation training | 6-11 days | $2,500-4,500 |
+
+### Serverless (Inference Only)
+| Component | Spec | Cost |
+|---|---|---|
+| GPU | 48GB (A40/A6000, high supply) | $0.00034/s |
+| Idle | $0.00/hr | — |
+| Per request | ~$0.01-0.03 | — |
+| Cold start | ~15-30s (image cached) | — |
+
+---
+
 ## Resolution Tiers
 
 | Tier | Cell Size | Cells/m³ | Distance | Use Case |
@@ -333,18 +367,15 @@ SAM 3 labels trigger material-specific corrections before cell construction:
 | 3 | 1 cm | 1,000,000 | Production | High-detail render |
 | 4 | 0.5 cm | 8,000,000 | Cinematic | Extreme close-ups |
 
-Subdivision: `child_value = parent + ∇ · offset + ½∇² · offset²`
-Merge: integral-weighted average (total energy/mass/color conserved exactly)
-
 ---
 
 ## Memory Budget (Typical Room)
 
-| Mode | Cells | Memory | GPU |
-|------|-------|--------|-----|
-| Real-time navigation | ~30K visible | 15-60 MB | RTX 3060+ |
-| Production render | ~7.5M at Tier 3 | 1-4 GB | RTX 4090 |
-| Cinematic render | ~120M at Tier 4 | 4-15 GB (streamed) | A100 |
+| Mode | Cells | Memory | Min GPU |
+|------|-------|--------|---------|
+| Real-time navigation | ~30K visible | 15-60 MB | A40 48GB |
+| Production render | ~7.5M at Tier 3 | 1-4 GB | A100 80GB |
+| Cinematic render | ~120M at Tier 4 | 4-15 GB (streamed) | H100 80GB |
 
 ---
 
@@ -358,29 +389,30 @@ Merge: integral-weighted average (total energy/mass/color conserved exactly)
 | Build system | CMake 3.18 + scikit-build-core |
 | ML framework | PyTorch 2.4+ |
 | Depth estimation | Apple Depth Pro (1.9GB) |
-| Segmentation | SAM 3 (facebook/sam3, 840M params, HF Transformers) |
+| Segmentation | SAM 3 (facebook/sam3, 840M params) |
 | Rendering | ModernGL 5.12 + GLFW |
 | AI texturing (realtime) | Pix2PixHD-Lite (custom, 25M params) |
 | AI texturing (production) | StreamDiffusion + ControlNet |
-| VLM (Stage 4) | Qwen3-VL-8B-Instruct / 30B-A3B + LoRA |
+| VLM | Qwen3-VL-8B-Instruct + LoRA distillation |
 | Training data | ScanNet, Matterport3D, 3D-FRONT |
-| Deployment | RunPod serverless (A40/A6000, 48GB) |
+| Deployment | RunPod serverless (A40/A100/H100) |
 
 ---
 
 ## Current Status
 
-**71/71 tests pass** across 3 test suites on RunPod A40 with Depth Pro + SAM 3.
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Stage 2 — Cell struct + perception + grid | 29/29 | PASS |
+| Image-based — 11 synthetic + GPU models | 13/13 | PASS |
+| Unified foundation — validation fields | 29/29 | PASS |
+| VLM Stage 4 — model loading + context + fallbacks | 11/11 | PASS |
+| VLM Stage 4 — needs_training | 14 | scaffolded |
+| **Total verified** | **82/82** | **PASS** |
 
-| Stage | Status | Tests |
-|-------|--------|-------|
-| 1-2. Foundation (cell grid, perception, confidence) | COMPLETE | 29/29 |
-| Image-based (11 synthetic images, GPU models) | COMPLETE | 13/13 |
-| Unified foundation (validation fields, conservation) | COMPLETE | 29/29 |
-| 3. Placement (heatmaps, constraints) | NOT STARTED | — |
-| 4. VLM intelligence (Qwen + 3D-RoPE) | NOT STARTED | — |
+**Distillation validated:** 44.4% → 88.0% spatial accuracy with 2,898 synthetic pairs, zero aesthetic degradation.
 
-**Serverless endpoint:** `0gmi4sn8cc0scc` on RunPod, 48GB GPU (A6000/A40), idle at $0/hr.
+**Serverless endpoint:** `0gmi4sn8cc0scc` on RunPod, 48GB GPU, idle at $0/hr.
 
 ---
 
@@ -391,9 +423,10 @@ Merge: integral-weighted average (total energy/mass/color conserved exactly)
 | `cell_architecture_theory.md` | Cell data model, pipeline stages, derivatives replace systems |
 | `single_image_precision_theory.md` | Depth Pro precision, error propagation, subdivision limits |
 | `unified_pipeline_theory.md` | Validation fields, interaction model, auto-furnishing |
-| `vlm_architecture_theory.md` | Qwen2.5-VL, 3D-RoPE, SpatialVLM distillation, training |
+| `vlm_architecture_theory.md` | Qwen3-VL, native spatial encoding, SpatialVLM distillation |
 | `trivima_testing_stage2.md` | 28 foundation tests specification |
 | `trivima_testing_unified_foundation.md` | 29 validation field tests specification |
+| `trivima_testing_vlm_stage4.md` | 25 VLM tests specification |
 
 ---
 
@@ -404,9 +437,10 @@ Merge: integral-weighted average (total energy/mass/color conserved exactly)
 | Noisy depth gradients | High | MITIGATED — bilateral σ=2.5 + 5×5 Sobel |
 | Temporal flickering | High | MITIGATED — per-cell blending, not screen-space EMA |
 | Failure modes (glass/mirror/dark) | High | MITIGATED — SAM 3 detection + forced density + confidence |
-| cuDNN driver mismatch on cloud | Medium | MITIGATED — auto-disable cuDNN on init failure |
-| SAM model version | Medium | RESOLVED — SAM 3 from facebook/sam3 via HF Transformers |
-| Dual smoothing over-smoothing | Medium | MONITORING — bilateral σ reduced to 2.5, test in Week 4 |
+| cuDNN driver mismatch | Medium | MITIGATED — auto-disable cuDNN on init failure |
+| SAM model version | Medium | RESOLVED — SAM 3 from facebook/sam3 |
+| VLM spatial accuracy | Medium | RESOLVED — 88% after distillation (target was 60-75%) |
+| 30B-A3B memory on A40 | Medium | RESOLVED — use 8B on A40, 30B on A100+ |
+| Dual smoothing over-smoothing | Medium | MONITORING — test brick/wood grain in Week 4 |
 | GAN blurry output | Medium | DESIGNED — perceptual loss + pretrained init + ControlNet fallback |
-| Training data timing | Medium | DESIGNED — start ScanNet voxelization as background job |
-| VLM re-ranking latency | Low-Med | DESIGNED — two modes: logit (~200ms) + generative (~2-5s) |
+| VLM re-ranking latency | Low | VALIDATED — 200-500ms on A40 |

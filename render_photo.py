@@ -156,7 +156,7 @@ def main():
     valid = smoothed > 0.1
     px = (u - cx) * smoothed / focal
     py = -(v - cy) * smoothed / focal
-    pz = smoothed
+    pz = -smoothed  # OpenGL convention: camera looks along -Z
 
     positions = np.stack([px[valid], py[valid], pz[valid]], axis=-1).astype(np.float32)
     colors = image[valid].astype(np.float32) / 255.0
@@ -184,10 +184,10 @@ def main():
     for i, (key, cell) in enumerate(cells.items()):
         cell_pos[i] = cell["ps"] / cell["n"]
         cell_col[i] = np.clip(cell["cs"] / cell["n"], 0, 1)
-        # Normal points toward camera (0,0,0)
+        # Normal points toward camera at origin (cells are at -Z, so normal is +Z)
         to_cam = -cell_pos[i]
         nm = np.linalg.norm(to_cam)
-        cell_nrm[i] = to_cam / nm if nm > 1e-6 else [0, 0, -1]
+        cell_nrm[i] = to_cam / nm if nm > 1e-6 else [0, 0, 1]
 
     print(f"  {n_cells:,} cells from {len(positions):,} points")
 
@@ -232,10 +232,11 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     cam_pos = np.array([0.0, 0.0, 0.0], dtype=np.float64)
 
-    views = [("original", 90, 0)]
+    # Camera looks along -Z (OpenGL convention). yaw=-90 = looking along -Z.
+    views = [("original", -90, 0)]
     for i in range(1, args.views):
         angle = i * (360 // args.views)
-        views.append((f"rot_{angle}", 90 + angle, 0))
+        views.append((f"rot_{angle}", -90 + angle, 0))
 
     print("[4/4] Writing views...")
     for i, (name, yaw, pitch) in enumerate(views):

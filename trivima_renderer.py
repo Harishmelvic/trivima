@@ -68,7 +68,7 @@ in vec3 inst_color;      // cell albedo RGB
 in vec3 inst_normal;     // cell surface normal
 in float inst_size;      // cell size (usually 0.05m)
 in float inst_density;   // 0-1 solidity
-in int inst_cell_id;     // cell index for ID buffer
+in float inst_cell_id;   // cell index (float to avoid glVertexAttribIPointer bug)
 
 uniform mat4 u_projection;
 uniform mat4 u_view;
@@ -83,14 +83,14 @@ flat out int v_cell_id;
 void main() {
     // Scale unit cube by cell size, position at cell center
     vec3 world_pos = in_position * inst_size * 0.5 + inst_position;
-    
+
     gl_Position = u_projection * u_view * vec4(world_pos, 1.0);
-    
+
     v_world_pos = world_pos;
     v_color = inst_color;
     v_normal = inst_normal;
     v_density = inst_density;
-    v_cell_id = inst_cell_id;
+    v_cell_id = int(inst_cell_id);
 }
 """
 
@@ -107,35 +107,28 @@ uniform vec3 u_light_dir;
 uniform vec3 u_camera_pos;
 uniform int u_render_mode;  // 0=lit, 1=albedo, 2=normals, 3=density
 
-layout(location = 0) out vec4 frag_color;
-layout(location = 1) out int frag_cell_id;
+out vec4 frag_color;
 
 void main() {
     vec3 N = normalize(v_normal);
     vec3 L = normalize(u_light_dir);
     vec3 V = normalize(u_camera_pos - v_world_pos);
-    
+
     if (u_render_mode == 0) {
-        // Lit shading
+        // Lit shading: ambient + diffuse + specular + rim
         float ambient = 0.15;
         float diffuse = max(dot(N, L), 0.0) * 0.6;
         float spec = pow(max(dot(reflect(-L, N), V), 0.0), 32.0) * 0.15;
         float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.1;
-        
         vec3 color = v_color * (ambient + diffuse) + vec3(spec + rim);
         frag_color = vec4(color, 1.0);
     } else if (u_render_mode == 1) {
-        // Albedo only
-        frag_color = vec4(v_color, 1.0);
+        frag_color = vec4(v_color, 1.0);           // Albedo only
     } else if (u_render_mode == 2) {
-        // Normals visualization
-        frag_color = vec4(N * 0.5 + 0.5, 1.0);
+        frag_color = vec4(N * 0.5 + 0.5, 1.0);    // Normals
     } else {
-        // Density visualization
-        frag_color = vec4(vec3(v_density), 1.0);
+        frag_color = vec4(vec3(v_density), 1.0);   // Density
     }
-    
-    frag_cell_id = v_cell_id;
 }
 """
 
@@ -579,7 +572,7 @@ class TrivimRenderer(mglw.WindowConfig):
         inst_normals = self.grid.normals.astype(np.float32)
         inst_sizes = self.grid.sizes.astype(np.float32)
         inst_densities = self.grid.densities.astype(np.float32)
-        inst_cell_ids = np.arange(n, dtype=np.int32)
+        inst_cell_ids = np.arange(n, dtype=np.float32)
         
         self.vbo_inst_pos = ctx.buffer(inst_positions.tobytes())
         self.vbo_inst_col = ctx.buffer(inst_colors.tobytes())
@@ -599,7 +592,7 @@ class TrivimRenderer(mglw.WindowConfig):
                 (self.vbo_inst_nrm, '3f/i', 'inst_normal'),
                 (self.vbo_inst_size, 'f/i', 'inst_size'),
                 (self.vbo_inst_density, 'f/i', 'inst_density'),
-                (self.vbo_inst_id, 'i/i', 'inst_cell_id'),
+                (self.vbo_inst_id, 'f/i', 'inst_cell_id'),
             ],
             index_buffer=self.ibo,
         )

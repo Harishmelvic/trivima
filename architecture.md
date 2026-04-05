@@ -31,7 +31,7 @@ Photo ──→ Perception ──→ Cell Grid ──→ AI Texturing ──→ 
 
 **Stage 7 — Placement (Stage 3+):** Validation fields (surface, functional, BFS clearance) produce composite scores. Placement heatmap overlaid on 3D view.
 
-**Stage 8 — VLM Intelligence (Stage 4+):** Qwen2.5-VL-32B + 3D-RoPE re-ranks candidates, plans auto-furnishing, matches object styles. Never in the render loop.
+**Stage 8 — VLM Intelligence (Stage 4+):** Qwen3-VL-8B with native 3D grounding re-ranks candidates, plans auto-furnishing, matches object styles via prompt-based 3D context. Never in the render loop.
 
 ---
 
@@ -317,7 +317,7 @@ SAM 3 labels trigger material-specific corrections before cell construction:
                               ↓
                         ┌─────────────┐
                         │  VLM Re-rank │  (Stage 4)
-                        │  (Qwen+3D)   │
+                        │  (Qwen3-VL)  │
                         └─────────────┘
 ```
 

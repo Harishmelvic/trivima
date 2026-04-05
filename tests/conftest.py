@@ -10,3 +10,5 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "phase3: cell grid construction tests")
     config.addinivalue_line("markers", "phase4: shell extension tests")
     config.addinivalue_line("markers", "synthetic: tests that don't need ML models")
+    config.addinivalue_line("markers", "no_model: image tests that don't need ML models")
+    config.addinivalue_line("markers", "needs_model: tests requiring Depth Pro / SAM on GPU")

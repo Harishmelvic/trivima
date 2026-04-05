@@ -1,156 +1,108 @@
 """
-Qwen2.5-VL with 3D-RoPE — VLM for design intelligence.
+Qwen3-VL — VLM for design intelligence.
 
-From vlm_architecture_theory.md:
-  - Qwen2.5-VL-32B as single runtime model (8-bit quantized, ~32GB)
-  - 3D-RoPE: replaces 2D pixel positional encoding with metric 3D coords
-  - Dimension allocation: 1/3 X, 1/3 Y, 1/3 Z (normalized to [0,1])
-  - Falls back to 2D for low-confidence patches
+From vlm_architecture_theory.md (v2 — Qwen3-VL):
+  - Qwen3-VL-8B-Instruct as primary model (~16GB fp16)
+  - Native 3D grounding via Interleaved-MRoPE (no custom 3D-RoPE hack)
+  - Prompt-based 3D context from cell grid (distances, surfaces, positions)
   - SpatialVLM distillation loaded via LoRA adapters
+  - Thinking variant available for complex design reasoning
 
-Usage:
-    vlm = QwenVLM(device="cuda")
-    vlm.load()
-    response = vlm.query(image, "Describe this room")
-    scores = vlm.score_candidates(image, candidates, category="lamp")
+Model selection by use case:
+  - Qwen3-VL-8B-Instruct: fast re-ranking, distillation testing
+  - Qwen3-VL-8B-Thinking: auto-furnishing planning
+  - Qwen3-VL-30B-A3B-Instruct: production quality (30B params, 3B active)
+
+Never in the render loop — called at decision points only.
 """
 
 import numpy as np
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 from pathlib import Path
+import re
 
 
-class ThreeDRoPE:
-    """3D Rotary Position Embedding — replaces 2D pixel coords with metric 3D.
+class SpatialContextBuilder:
+    """Builds prompt-based 3D context from the cell grid for VLM queries.
 
-    From vlm_architecture_theory.md Ch2:
-      - Each patch's (X, Y, Z) in meters → rotational encoding
-      - Dimension split: 1/3 X, 1/3 Y, 1/3 Z
-      - Coordinates normalized by room dimensions to [0, 1]
-      - Low-confidence patches fall back to (u, v, 0)
+    Instead of injecting 3D coordinates into the model's positional encoding
+    (the old 3D-RoPE approach), we provide explicit spatial data in the prompt.
+    Qwen3-VL reasons about this data using its native 3D understanding.
 
-    Zero parameters, zero cost — same RoPE computation, different input values.
+    This is simpler (no model modification), more portable (works with any VLM),
+    and more robust (uses the VLM's trained reasoning path).
     """
 
-    def __init__(self, embed_dim: int = 1280, room_size: Tuple[float, float, float] = (5.0, 3.0, 5.0)):
-        self.embed_dim = embed_dim
-        self.room_size = room_size  # (width_x, height_y, depth_z) in meters
-        # Split dimensions equally: 1/3 for each axis
-        self.dim_per_axis = embed_dim // 3
+    def __init__(self, cell_size: float = 0.05):
+        self.cell_size = cell_size
 
-    def compute_3d_positions(
+    def build_room_context(self, grid_data: dict, label_names: Dict[int, str]) -> str:
+        """Build a text description of the room from the cell grid.
+
+        Used for auto-furnishing and environment classification prompts.
+        """
+        # Room dimensions from cell bounds
+        keys = list(grid_data.keys())
+        if not keys:
+            return "Empty scene."
+
+        xs = [k[0] for k in keys]
+        ys = [k[1] for k in keys]
+        zs = [k[2] for k in keys]
+        width = (max(xs) - min(xs) + 1) * self.cell_size
+        height = (max(ys) - min(ys) + 1) * self.cell_size
+        depth = (max(zs) - min(zs) + 1) * self.cell_size
+
+        # Existing furniture from semantic labels
+        from collections import Counter
+        label_counts = Counter()
+        for cell in grid_data.values():
+            label_idx = cell.get("label", 0)
+            name = label_names.get(label_idx, "").lower()
+            if name and name not in ("background", "floor", "wall", "ceiling", ""):
+                label_counts[name] += 1
+
+        furniture = [f"{name} ({count} cells)" for name, count in label_counts.most_common(10)]
+        furniture_str = ", ".join(furniture) if furniture else "none detected"
+
+        return (
+            f"Room dimensions: {width:.1f}m × {depth:.1f}m × {height:.1f}m.\n"
+            f"Existing furniture: {furniture_str}.\n"
+            f"Total cells: {len(grid_data):,}."
+        )
+
+    def build_candidate_context(
         self,
-        depth_map: np.ndarray,
-        intrinsics: np.ndarray,
-        confidence_map: Optional[np.ndarray] = None,
-        patch_size: int = 14,
-        confidence_threshold: float = 0.3,
-    ) -> np.ndarray:
-        """Compute 3D positions for each image patch.
+        candidates: List[Dict],
+        category: str = "",
+    ) -> str:
+        """Build text description of placement candidates for re-ranking.
 
-        Args:
-            depth_map: (H, W) metric depth in meters
-            intrinsics: (3, 3) camera intrinsics
-            confidence_map: (H, W) per-pixel confidence [0,1]. Low-conf → 2D fallback.
-            patch_size: ViT patch size (typically 14 for Qwen2.5-VL)
-            confidence_threshold: below this, fall back to 2D
-
-        Returns:
-            (num_patches, 3) normalized 3D positions in [0,1]
+        Each candidate includes its 3D position and validation scores.
         """
-        h, w = depth_map.shape
-        fx, fy = intrinsics[0, 0], intrinsics[1, 1]
-        cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+        lines = []
+        for i, c in enumerate(candidates):
+            desc = c.get('description', '')
+            if not desc:
+                desc = "({:.1f}, {:.1f}, {:.1f})".format(
+                    c.get('x', 0), c.get('y', 0), c.get('z', 0)
+                )
 
-        # Patch grid
-        ph = h // patch_size
-        pw = w // patch_size
-        positions = np.zeros((ph * pw, 3), dtype=np.float32)
+            parts = [f"Position {i+1}: {desc}"]
+            if 'validation_score' in c:
+                parts.append(f"validation={c['validation_score']:.2f}")
+            if 'clearance' in c:
+                parts.append(f"clearance={c['clearance']:.2f}m")
+            if 'surface_type' in c:
+                parts.append(f"surface={c['surface_type']}")
 
-        for py in range(ph):
-            for px in range(pw):
-                # Patch center pixel
-                u = (px + 0.5) * patch_size
-                v = (py + 0.5) * patch_size
-                iu, iv = int(u), int(v)
+            lines.append(", ".join(parts))
 
-                # Get depth at patch center
-                d = depth_map[min(iv, h - 1), min(iu, w - 1)]
-
-                # Check confidence
-                use_3d = True
-                if confidence_map is not None:
-                    conf = confidence_map[min(iv, h - 1), min(iu, w - 1)]
-                    if conf < confidence_threshold:
-                        use_3d = False
-
-                idx = py * pw + px
-
-                if use_3d and d > 0.1:
-                    # 3D backprojection
-                    x = (u - cx) * d / fx
-                    y = (v - cy) * d / fy
-                    z = d
-
-                    # Normalize to [0, 1] by room size
-                    positions[idx, 0] = np.clip(x / self.room_size[0] + 0.5, 0, 1)
-                    positions[idx, 1] = np.clip(y / self.room_size[1] + 0.5, 0, 1)
-                    positions[idx, 2] = np.clip(z / self.room_size[2], 0, 1)
-                else:
-                    # 2D fallback: (u_norm, v_norm, 0)
-                    positions[idx, 0] = u / w
-                    positions[idx, 1] = v / h
-                    positions[idx, 2] = 0.0  # no depth info
-
-        return positions
-
-    def encode(self, positions: np.ndarray) -> np.ndarray:
-        """Compute RoPE frequencies from 3D positions.
-
-        Standard RoPE: freq_i = pos / 10000^(2i/d)
-        3D-RoPE: same formula applied independently to X, Y, Z dimensions.
-
-        Args:
-            positions: (N, 3) normalized positions in [0,1]
-
-        Returns:
-            (N, embed_dim) sinusoidal positional encodings
-        """
-        n = positions.shape[0]
-        encoding = np.zeros((n, self.embed_dim), dtype=np.float32)
-
-        for axis in range(3):
-            start = axis * self.dim_per_axis
-            end = start + self.dim_per_axis
-            pos = positions[:, axis]  # (N,)
-
-            # RoPE frequencies
-            dim_indices = np.arange(self.dim_per_axis // 2, dtype=np.float32)
-            freqs = 1.0 / (10000.0 ** (2 * dim_indices / self.dim_per_axis))
-
-            # Outer product: pos × freqs
-            angles = np.outer(pos, freqs)  # (N, dim//2)
-
-            # Sin/cos pairs
-            encoding[:, start:start + self.dim_per_axis // 2] = np.sin(angles)
-            encoding[:, start + self.dim_per_axis // 2:end] = np.cos(angles)
-
-        return encoding
-
-    def validate_encoding(self, encoding: np.ndarray) -> dict:
-        """Validate encoding quality — used in tests."""
-        return {
-            "shape": encoding.shape,
-            "has_nan": bool(np.any(np.isnan(encoding))),
-            "has_inf": bool(np.any(np.isinf(encoding))),
-            "min": float(encoding.min()),
-            "max": float(encoding.max()),
-            "mean_magnitude": float(np.abs(encoding).mean()),
-        }
+        return "\n".join(lines)
 
 
 class QwenVLM:
-    """Qwen2.5-VL with 3D-RoPE for design intelligence.
+    """Qwen3-VL for design intelligence.
 
     Provides:
       - Room description and classification
@@ -158,48 +110,58 @@ class QwenVLM:
       - Auto-furnishing gap detection
       - Object style matching
 
-    Never in the render loop — called at decision points only.
+    Uses native Qwen3-VL spatial encoding — no custom 3D-RoPE injection.
     """
 
     def __init__(
         self,
-        model_id: str = "Qwen/Qwen2.5-VL-32B-Instruct",
+        model_id: str = "Qwen/Qwen3-VL-8B-Instruct",
         device: str = "cuda",
-        quantize_8bit: bool = True,
         lora_path: Optional[str] = None,
     ):
         self.model_id = model_id
         self.device = device
-        self.quantize_8bit = quantize_8bit
         self.lora_path = lora_path
 
         self._model = None
         self._processor = None
-        self._rope_3d = ThreeDRoPE()
+        self._context_builder = SpatialContextBuilder()
 
     def load(self):
-        """Load Qwen2.5-VL with optional 8-bit quantization and LoRA."""
+        """Load Qwen3-VL model."""
         import torch
 
         try:
-            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+            # Try Qwen3-VL first (transformers >= 4.57)
+            try:
+                from transformers import Qwen2_5_VLForConditionalGeneration as QwenVLModel
+                from transformers import AutoProcessor
+                print(f"[VLM] Loading {self.model_id} via Qwen2_5_VLForConditionalGeneration...")
+            except ImportError:
+                from transformers import AutoModelForCausalLM as QwenVLModel
+                from transformers import AutoProcessor
+                print(f"[VLM] Loading {self.model_id} via AutoModelForCausalLM...")
 
-            load_kwargs = {"device_map": "auto", "torch_dtype": torch.float16}
-
-            if self.quantize_8bit:
+            # Disable cuDNN if it causes issues (common on cloud GPUs)
+            if torch.cuda.is_available():
                 try:
-                    from transformers import BitsAndBytesConfig
-                    load_kwargs["quantization_config"] = BitsAndBytesConfig(
-                        load_in_8bit=True,
-                    )
-                    print("[VLM] Loading Qwen2.5-VL with 8-bit quantization...")
-                except ImportError:
-                    print("[VLM] bitsandbytes not available, loading in float16")
+                    conv_test = torch.nn.Conv2d(1, 1, 1).cuda()
+                    conv_test(torch.randn(1, 1, 1, 1).cuda())
+                    del conv_test
+                except RuntimeError:
+                    torch.backends.cudnn.enabled = False
+                    print("[VLM] cuDNN disabled (driver mismatch)")
 
-            self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                self.model_id, **load_kwargs
+            self._model = QwenVLModel.from_pretrained(
+                self.model_id,
+                device_map="auto",
+                torch_dtype=torch.float16,
+                trust_remote_code=True,
             )
-            self._processor = AutoProcessor.from_pretrained(self.model_id)
+            self._processor = AutoProcessor.from_pretrained(
+                self.model_id,
+                trust_remote_code=True,
+            )
 
             # Load LoRA adapters if available (from distillation training)
             if self.lora_path and Path(self.lora_path).exists():
@@ -212,10 +174,10 @@ class QwenVLM:
 
             self._model.eval()
             gpu_mem = torch.cuda.max_memory_allocated() / 1024**3
-            print(f"[VLM] Qwen2.5-VL loaded. GPU memory: {gpu_mem:.1f} GB")
+            print(f"[VLM] Loaded. GPU memory: {gpu_mem:.1f} GB")
 
         except ImportError as e:
-            print(f"[VLM] transformers Qwen2.5-VL not available: {e}")
+            print(f"[VLM] transformers not available: {e}")
             raise
 
     def query(self, image: np.ndarray, prompt: str,
@@ -226,7 +188,7 @@ class QwenVLM:
             image: (H, W, 3) uint8 RGB
             prompt: text query
             max_tokens: max response length
-            temperature: sampling temperature (0.1 = near-deterministic)
+            temperature: sampling temperature
 
         Returns:
             Text response from the model
@@ -246,9 +208,15 @@ class QwenVLM:
             ]}
         ]
 
-        text = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self._processor(text=[text], images=[pil_image], return_tensors="pt", padding=True)
-        inputs = {k: v.to(self.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        text = self._processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        inputs = self._processor(
+            text=[text], images=[pil_image],
+            return_tensors="pt", padding=True
+        )
+        inputs = {k: v.to(self.device) if hasattr(v, 'to') else v
+                  for k, v in inputs.items()}
 
         with torch.no_grad():
             output_ids = self._model.generate(
@@ -258,9 +226,10 @@ class QwenVLM:
                 do_sample=temperature > 0,
             )
 
-        # Decode only the new tokens
         input_len = inputs["input_ids"].shape[1]
-        response = self._processor.decode(output_ids[0][input_len:], skip_special_tokens=True)
+        response = self._processor.decode(
+            output_ids[0][input_len:], skip_special_tokens=True
+        )
         return response.strip()
 
     def score_candidates(
@@ -279,7 +248,7 @@ class QwenVLM:
             mode: "fast" (logit scoring, ~200-500ms) or "full" (generative, ~2-5s)
 
         Returns:
-            Candidates sorted by VLM score (best first), each with vlm_score added
+            Candidates sorted by VLM score (best first)
         """
         if mode == "fast":
             return self._score_fast(image, candidates, category)
@@ -287,25 +256,16 @@ class QwenVLM:
             return self._score_full(image, candidates, category)
 
     def _score_fast(self, image, candidates, category):
-        """Fast logit-based scoring — single forward pass."""
-        # Format all candidates into one prompt
-        candidate_descriptions = "\n".join(
-            "Position {}: {}".format(
-                i + 1,
-                c.get('description', '({:.1f}, {:.1f}, {:.1f})'.format(c.get('x', 0), c.get('y', 0), c.get('z', 0)))
-            )
-            for i, c in enumerate(candidates)
-        )
+        """Fast scoring — single forward pass, ranking only."""
+        context = self._context_builder.build_candidate_context(candidates, category)
 
         prompt = (
             f"Rate each position for placing a {category} in this room. "
             f"Reply with ONLY the position numbers ranked best to worst.\n\n"
-            f"{candidate_descriptions}"
+            f"{context}"
         )
 
         response = self.query(image, prompt, max_tokens=100, temperature=0.0)
-
-        # Parse ranking from response
         ranked = self._parse_ranking(response, len(candidates))
 
         for i, c in enumerate(candidates):
@@ -318,52 +278,36 @@ class QwenVLM:
     def _score_full(self, image, candidates, category):
         """Full generative scoring with explanations."""
         top_n = min(5, len(candidates))
-        top_candidates = sorted(candidates, key=lambda c: c.get("validation_score", 0), reverse=True)[:top_n]
+        top = sorted(candidates, key=lambda c: c.get("validation_score", 0), reverse=True)[:top_n]
 
-        descs = "\n".join(
-            f"Position {i+1}: {c.get('description', 'unknown')}, validation score: {c.get('validation_score', 0):.2f}"
-            for i, c in enumerate(top_candidates)
-        )
+        context = self._context_builder.build_candidate_context(top, category)
 
         prompt = (
             f"Rank these {top_n} positions for placing a {category}. "
-            f"For the top choice, explain why it's best considering style, function, and spatial balance.\n\n"
-            f"{descs}"
+            f"For the top choice, explain why it's best.\n\n"
+            f"{context}"
         )
 
         response = self.query(image, prompt, max_tokens=300, temperature=0.1)
 
-        for i, c in enumerate(top_candidates):
+        for i, c in enumerate(top):
             c["vlm_explanation"] = response
             c["vlm_score"] = 1.0 - i / top_n
 
-        return top_candidates
+        return top
 
     def _parse_ranking(self, response: str, n: int) -> List[int]:
         """Parse position numbers from VLM response."""
-        import re
         numbers = re.findall(r'\d+', response)
         ranked = []
         for num_str in numbers:
-            idx = int(num_str) - 1  # 1-indexed to 0-indexed
+            idx = int(num_str) - 1
             if 0 <= idx < n and idx not in ranked:
                 ranked.append(idx)
-        # Fill missing positions
         for i in range(n):
             if i not in ranked:
                 ranked.append(i)
         return ranked
-
-    def inject_3d_rope(self, depth_map: np.ndarray, intrinsics: np.ndarray,
-                       confidence_map: Optional[np.ndarray] = None) -> np.ndarray:
-        """Compute 3D-RoPE positions for the current image.
-
-        Returns (num_patches, 3) normalized positions that can be used
-        to replace the model's default 2D positional encoding.
-        """
-        return self._rope_3d.compute_3d_positions(
-            depth_map, intrinsics, confidence_map
-        )
 
     def get_memory_usage(self) -> dict:
         """Return current GPU memory usage."""

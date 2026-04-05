@@ -44,7 +44,7 @@ class Config:
     """All configurable parameters in one place."""
     
     # Model
-    model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    model_name: str = "Qwen/Qwen3-VL-8B-Instruct"
     torch_dtype: str = "float16"
     
     # LoRA

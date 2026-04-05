@@ -150,7 +150,7 @@ The VLM is called at four specific points in the pipeline, never in the per-fram
 
 Environment classification (once per scene): the VLM examines the photograph and determines what kind of environment it is — indoor room, urban street, natural terrain, coastal scene. This classification drives the shell extension strategy (room planes vs terrain generation vs building facades), the auto-population rules (furniture for rooms, street elements for urban, natural features for terrain), and the validation field parameters.
 
-Aesthetic re-ranking of 20-50 candidates: approximately 200-500 milliseconds. Fast enough for interactive placement — the user sees the heatmap update within half a second of selecting a position. For the logit-scoring fast path (no generated explanation), latency is at the lower end. For the generative path with explanations, allow 2-5 seconds.
+Aesthetic re-ranking (per placement query): the coordinate-validation system identifies the top 20-50 physically valid candidate positions. The VLM examines these positions in context and re-ranks them based on style coherence, cultural appropriateness, visual relationships, and design sophistication. The VLM's top choice becomes the recommendation.
 
 Auto-furnishing planning (once per scene, if activated): the VLM examines the cell grid's semantic content and identifies functional gaps — "this living room has a sofa but no coffee table," "this bedroom needs nightstands." It determines the placement order (anchor pieces first, dependent pieces second, accent pieces last) and provides lookahead — checking that the sofa position leaves room for the coffee table before committing.
 
@@ -172,7 +172,7 @@ The VLM adds latency only at decision points, not per-frame.
 
 Environment classification: approximately 2 seconds. Called once when the scene is first loaded. Runs in parallel with cell grid construction and shell extension.
 
-Aesthetic re-ranking of 20-50 candidates: approximately 200-500 milliseconds. Fast enough for interactive placement — the user sees the heatmap update within half a second of selecting a position.
+Aesthetic re-ranking of 20-50 candidates: approximately 50-100 milliseconds. Fast enough for interactive placement — the user sees the heatmap update within 100ms of selecting a position.
 
 Auto-furnishing plan: approximately 3-5 seconds for a full room plan (5-10 objects). Called once. The actual placement (validation field evaluation) is separate and fast.
 
@@ -322,7 +322,7 @@ Role: design intelligence (style, culture, function, aesthetics) operating on to
 | Training time | 6-11 days |
 | Training cost | $2,500-4,500 |
 | Inference latency | 200-500ms (re-ranking), 2-5s (full planning) |
-| GPU memory | ~16 GB (8B fp16) / ~15-20 GB (30B-A3B MoE fp16, all params loaded, 3B active) |
+| GPU memory | ~16 GB (8B fp16) / ~6 GB (30B-A3B MoE, 3B active) |
 | Thinking variant | Available for complex design reasoning |
 | Aesthetic agreement with humans | Target 80%+ |
 

@@ -84,7 +84,8 @@ def check_gpu():
         if not torch.cuda.is_available():
             return False
         # Check if we have enough memory (need ~32GB for Qwen-32B)
-        total_mem = torch.cuda.get_device_properties(0).total_mem / 1024**3
+        props = torch.cuda.get_device_properties(0)
+        total_mem = getattr(props, 'total_memory', getattr(props, 'total_mem', 0)) / 1024**3
         return total_mem >= 16  # at least 16GB for smaller models
     except ImportError:
         return False

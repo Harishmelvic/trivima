@@ -32,14 +32,21 @@ class SAMSegmenter:
         self._load_grounded_sam2()
 
     def _try_load_sam3(self) -> bool:
-        """Try to load SAM 3."""
+        """Try to load SAM via Ultralytics (SAM 2.1 or latest available)."""
         try:
             from ultralytics import SAM
-            self._model = SAM("sam3_l.pt")  # or latest SAM 3 checkpoint
-            print("[SAM] SAM 3 loaded")
-            return True
-        except (ImportError, Exception) as e:
-            print(f"[SAM] SAM 3 not available: {e}")
+            # Try SAM 2.1 large (latest available via Ultralytics as of 2026)
+            for model_name in ["sam2.1_l.pt", "sam2_l.pt", "sam_l.pt"]:
+                try:
+                    self._model = SAM(model_name)
+                    print(f"[SAM] Loaded {model_name} via Ultralytics")
+                    return True
+                except Exception:
+                    continue
+            print("[SAM] No Ultralytics SAM model available")
+            return False
+        except ImportError as e:
+            print(f"[SAM] Ultralytics not available: {e}")
             return False
 
     def _load_grounded_sam2(self):

@@ -29,7 +29,20 @@ class DepthProEstimator:
     def load(self):
         """Load Depth Pro model. Call once before inference."""
         try:
+            import torch
             import depth_pro
+
+            # Disable cuDNN if it causes CUDNN_STATUS_NOT_INITIALIZED
+            # (common with PyTorch/driver version mismatches on cloud GPUs)
+            if torch.cuda.is_available():
+                try:
+                    # Quick test: if cuDNN works, keep it enabled
+                    conv_test = torch.nn.Conv2d(1, 1, 1).cuda()
+                    conv_test(torch.randn(1, 1, 1, 1).cuda())
+                    del conv_test
+                except RuntimeError:
+                    torch.backends.cudnn.enabled = False
+                    print("[DepthPro] cuDNN disabled (driver mismatch)")
 
             model, transform = depth_pro.create_model_and_transforms(device=self.device)
             model.eval()

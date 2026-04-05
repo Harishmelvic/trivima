@@ -276,7 +276,7 @@ def apply_failure_mode_density_forcing(
 
     See: theory doc Chapter 7 — mirror density=1.0, glass density=1.0.
     """
-    from .failure_modes import MIRROR_LABELS, GLASS_LABELS
+    from trivima.perception.failure_modes import MIRROR_LABELS, GLASS_LABELS
 
     # Build set of cell keys that contain mirror or glass points
     mirror_glass_cells = set()

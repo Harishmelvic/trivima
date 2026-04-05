@@ -77,6 +77,9 @@ class Config:
     aesthetic_degradation_threshold: float = 0.15  # 15% max degradation
     perplexity_increase_threshold: float = 0.15  # 15% max increase
     
+    # 3D-RoPE (set to True to test with 3D positional encoding)
+    use_3d_rope: bool = False  # Start without, compare later
+    
     def save(self, path: str):
         with open(path, "w") as f:
             json.dump(asdict(self), f, indent=2)
@@ -1118,9 +1121,7 @@ def main():
     
     if torch.cuda.is_available():
         print(f"  GPU:        {torch.cuda.get_device_name()}")
-        props = torch.cuda.get_device_properties(0)
-        total_mem = getattr(props, 'total_memory', getattr(props, 'total_mem', 0))
-        print(f"  GPU memory: {total_mem / 1e9:.0f} GB")
+        print(f"  GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.0f} GB")
     else:
         print("  WARNING: No GPU detected — training will be very slow")
     

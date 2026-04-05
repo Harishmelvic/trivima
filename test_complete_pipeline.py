@@ -95,19 +95,24 @@ def load_perception_and_grid(runner: TestRunner, image_path: str):
     # Try importing Trivima modules
     try:
         from trivima.perception.pipeline import PerceptionPipeline
-        from trivima.construction.point_to_grid import PointToGrid
+        from trivima.construction.point_to_grid import build_cell_grid, apply_failure_mode_density_forcing
     except ImportError:
-        # Try adding parent dirs to path
         for p in ['.', '..', 'trivima']:
             sys.path.insert(0, p)
         from trivima.perception.pipeline import PerceptionPipeline
-        from trivima.construction.point_to_grid import PointToGrid
+        from trivima.construction.point_to_grid import build_cell_grid, apply_failure_mode_density_forcing
 
     pipeline = PerceptionPipeline()
+    pipeline.load_models()
     result = pipeline.run(image_path)
 
-    grid_builder = PointToGrid(cell_size=0.05)
-    grid = grid_builder.convert(result)
+    grid, stats = build_cell_grid(
+        result.positions, result.colors, result.normals,
+        result.labels, result.confidence, cell_size=0.05,
+    )
+    apply_failure_mode_density_forcing(
+        grid, None, result.label_names, result.positions, 0.05,
+    )
 
     # Cache
     runner.perception_result = result

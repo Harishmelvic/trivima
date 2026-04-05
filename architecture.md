@@ -17,21 +17,21 @@ Photo ──→ Perception ──→ Cell Grid ──→ AI Texturing ──→ 
 * First run: ~20s (model loading). Subsequent runs with models cached: ~1.5s.
 ```
 
-**Stage 1 — Perception:** Depth Pro extracts metric depth. SAM 3 (facebook/sam3, 840M params, text-prompted concept segmentation) provides semantic labels for 29 indoor concepts. Bilateral smoothing (σ=2.5) cleans depth noise. Scale calibration from detected doors corrects systematic error. Failure modes (glass, mirror, dark, sky, specular) detected and mitigated via per-pixel confidence.
+**Stage 1 — Perception (0.3s + 0.2s):** Depth Pro extracts metric depth (0.3s). SAM 3 (facebook/sam3, 840M params) provides semantic segmentation via Promptable Concept Segmentation (270K+ concepts, probes 29 indoor categories). Bilateral smoothing (σ=2.5, reduced from 3-4 to avoid dual-smoothing with 5×5 Sobel) cleans depth noise. Scale calibration from detected doors corrects systematic error. Failure modes (glass, mirror, dark, sky, specular) detected and mitigated via per-pixel confidence.
 
-**Stage 2 — Cell Grid Construction:** The point cloud is binned into 5cm cells. 5×5 Sobel gradients computed (not simple finite differences). Per-cell confidence from depth smoothness × point density × semantic penalty (multiplicative formula). Result: ~80K cells, ~40MB.
+**Stage 2 — Cell Grid Construction (0.5s):** The point cloud is binned into 5cm cells. 5×5 Sobel gradients computed (not simple finite differences). Per-cell confidence from depth smoothness × point density × semantic penalty (multiplicative formula). Result: ~80K cells, ~40MB.
 
-**Stage 3 — Shell Extension:** RANSAC detects floor/wall/ceiling planes. New cells generated along extended planes. Navigation starts at 1.5s with flat shading; shell completes in background at 10-15s.
+**Stage 3 — Shell Extension (background, 10-15s):** RANSAC detects floor/wall/ceiling planes. New cells generated along extended planes. Navigation starts at 1.5s with flat shading; shell completes in background.
 
-**Stage 4 — AI Texturing:** Pix2PixHD-Lite GAN (25M params, real-time) or StreamDiffusion + ControlNet (production quality). Light values written back to cells via cell ID buffer with view-angle weighting. Per-cell temporal blending prevents flicker. Only dirty cells (10-30%) re-lit each frame. Requires pre-training on ~200K cell-buffer/photo pairs (~48h on 8×A100).
+**Stage 4 — AI Texturing (5-8ms/frame real-time):** Pix2PixHD-Lite GAN (25M params, real-time) or StreamDiffusion + ControlNet (production quality). Light values written back to cells via cell ID buffer with view-angle weighting. Per-cell temporal blending prevents flicker. Only dirty cells (10-30%) re-lit each frame. Requires pre-training on ~200K cell-buffer/photo pairs (~48h on 8×A100).
 
-**Stage 5 — Rendering:** Instanced cubes via ModernGL. Adaptive LOD with subdivision cap (1 level single-image, 3 multi-image). Cell-based collision with confidence-expanded margins. Floor following with sub-cell gradient precision.
+**Stage 5 — Auto-Furnishing (30-60s, if activated):** VLM detects functional gaps, retrieves style-matched furniture, places via coordinate-validation with VLM re-ranking.
 
-**Stage 6 — Validation:** Conservation checks (energy, mass, shadow direction) run async, one frame behind. Corrections applied gradually over 3-5 frames.
+**Stage 6 — Validation (async, 1 frame behind):** Conservation checks (energy, mass, shadow direction). Corrections applied gradually over 3-5 frames.
 
-**Stage 7 — Placement (Stage 3+):** Validation fields (surface, functional, BFS clearance) produce composite scores. Placement heatmap overlaid on 3D view.
+**Stage 7 — Navigation (60+ FPS):** Cell-based collision with confidence-expanded margins. Floor following with sub-cell gradient precision. Density field provides physics — no separate physics engine.
 
-**Stage 8 — VLM Intelligence (Stage 4+):** Qwen3-VL-8B with native 3D grounding re-ranks candidates, plans auto-furnishing, matches object styles via prompt-based 3D context. Never in the render loop.
+**Stage 8 — Rendering (30-60+ FPS):** Instanced cubes via ModernGL. Adaptive LOD with subdivision cap (1 level single-image, 3 multi-image). Cell ID buffer for AI texturing write-back and user interaction.
 
 ---
 
@@ -360,6 +360,31 @@ H100 80GB enables: 30B-A3B VLM without CPU offloading, all perception models loa
 
 ---
 
+## Quality Expectations
+
+| Viewing Angle | Target SSIM | Notes |
+|---|---|---|
+| Original camera angle | 75-90% | Cell grid reconstructs photo pixels in 3D |
+| 30° off original | 60-75% | Some surfaces are AI-generated |
+| Behind camera (fully generated) | No target | Generation, not reconstruction |
+
+*Actual SSIM will be measured once the AI texturing GAN is trained.*
+
+---
+
+## Processing Timeline
+
+| Milestone | Time | What Happens |
+|---|---|---|
+| 0 → 1.0s | Perception | Depth Pro (0.3s) + SAM 3 (0.2s) + bilateral smoothing + scale cal |
+| 1.0 → 1.5s | Cell grid | Point-to-cell, gradients, integrals, neighbors |
+| **1.5s** | **Navigation begins** | **User walks around the visible portion** |
+| 1.5 → 15s | Shell extension | RANSAC planes, wall/floor/ceiling (background) |
+| 5 → 20s | AI texturing | GAN processes cell buffers (background) |
+| 30 → 60s | Auto-furnishing | VLM gap detection + validation placement (if activated) |
+
+---
+
 ## Resolution Tiers
 
 | Tier | Cell Size | Cells/m³ | Distance | Use Case |
@@ -427,6 +452,7 @@ H100 80GB enables: 30B-A3B VLM without CPU offloading, all perception models loa
 | `single_image_precision_theory.md` | Depth Pro precision, error propagation, subdivision limits |
 | `unified_pipeline_theory.md` | Validation fields, interaction model, auto-furnishing |
 | `vlm_architecture_theory.md` | Qwen3-VL, native spatial encoding, SpatialVLM distillation |
+| `complete_3d_world_theory.md` | Complete pipeline summary, World Labs comparison, costs, quality targets |
 | `trivima_testing_stage2.md` | 28 foundation tests specification |
 | `trivima_testing_unified_foundation.md` | 29 validation field tests specification |
 | `trivima_testing_vlm_stage4.md` | 25 VLM tests specification |

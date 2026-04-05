@@ -110,8 +110,6 @@ class TestPhase1ModelLoading:
     def _check_gpu(self):
         if not check_gpu():
             pytest.skip("No GPU with sufficient memory")
-        if not check_qwen_available():
-            pytest.skip("Qwen2.5-VL not available in transformers")
 
     @pytest.mark.critical
     def test_2_1_qwen_loads(self):

@@ -12,7 +12,9 @@ The system is built on a **Differential-Integral Cell Architecture** — one uni
 
 ```
 Photo ──→ Perception ──→ Cell Grid ──→ AI Texturing ──→ Render ──→ Navigate
-            (1.5s)        (0.5s)        (5-8ms/frame)   (1ms)     (60+ FPS)
+            (1.5s)*       (0.5s)        (5-8ms/frame)   (1ms)     (60+ FPS)
+
+* First run: ~20s (model loading). Subsequent runs with models cached: ~1.5s.
 ```
 
 **Stage 1 — Perception:** Depth Pro extracts metric depth. SAM 3 segments objects with semantic labels. The depth map is back-projected to a 3D point cloud with per-point color, normal, and label.
@@ -21,7 +23,7 @@ Photo ──→ Perception ──→ Cell Grid ──→ AI Texturing ──→ 
 
 **Stage 3 — Shell Extension:** RANSAC detects floor/wall/ceiling planes. New cells are generated along these planes to complete the room behind the camera.
 
-**Stage 4 — AI Texturing:** A Pix2PixHD-Lite GAN takes cell buffer renders (albedo + depth + normals + labels) and produces photorealistic output. Light values are written back to cells. Only dirty cells (10-30%) are re-lit each frame.
+**Stage 4 — AI Texturing:** A Pix2PixHD-Lite GAN takes cell buffer renders (albedo + depth + normals + labels) and produces photorealistic output. Light values are written back to cells. Only dirty cells (10-30%) are re-lit each frame. Requires pre-training on ~200K cell-buffer/photo pairs from ScanNet/Matterport3D (~48h on 8×A100).
 
 **Stage 5 — Rendering:** Cells are drawn as instanced cubes via ModernGL. Adaptive LOD: subdivide near cells (Taylor expansion), merge distant cells. Cell-based collision and floor following for navigation.
 
@@ -217,29 +219,36 @@ SAM labels trigger material-specific corrections before cell construction:
                                                      │ Cell Grid │
                                                      │ (sparse)  │
                                                      └─────┬────┘
-                                    ┌──────────────────────┤
-                                    ↓                      ↓
-                              Shell Extension        Buffer Renderer
-                              (RANSAC planes)        (5 channels + cell ID)
-                                    │                      ↓
-                                    ↓               ┌──────────────┐
-                              Complete Grid         │  AI Texturing │
-                                    │               │  (GAN or CN)  │
-                                    │               └──────┬───────┘
-                                    │                      ↓
-                                    │               Cell Write-Back
-                                    │               (view-angle weighted)
-                                    │                      ↓
-                                    │               Temporal Blend
-                                    │               (per-cell, not screen-space)
-                                    │                      ↓
-                                    ├──────────────→ Render (ModernGL)
-                                    │               (instanced cubes + LOD)
-                                    │                      ↓
-                                    │               Conservation Validation
-                                    │               (async, 1 frame behind)
-                                    │                      ↓
-                                    └──────────────→ Display @ 60+ FPS
+                                                           │
+                              ┌─── Navigation starts here (1.5s) ───┐
+                              │                                      │
+                              ↓                                      ↓
+                        Render visible cells              Shell Extension
+                        (flat shading, LOD)               (RANSAC planes,
+                              │                            background 10-15s)
+                              │                                 │
+                              ↓                                 ↓
+                        Buffer Renderer ←──────────── Complete Grid
+                        (5 channels + cell ID)              (merged)
+                              ↓
+                       ┌──────────────┐
+                       │  AI Texturing │
+                       │  (GAN or CN)  │
+                       └──────┬───────┘
+                              ↓
+                        Cell Write-Back
+                        (view-angle weighted)
+                              ↓
+                        Temporal Blend
+                        (per-cell, not screen-space)
+                              ↓
+                        Render (ModernGL)
+                        (instanced cubes + LOD)
+                              ↓
+                        Conservation Validation
+                        (async, 1 frame behind)
+                              ↓
+                        Display @ 60+ FPS
 ```
 
 ---

@@ -241,3 +241,13 @@ class PerceptionPipeline:
         # Extract valid normals
         normals = np.stack([nx[valid_mask], ny[valid_mask], nz[valid_mask]], axis=-1)
         return normals.astype(np.float32)
+
+    def unload(self):
+        """Free GPU memory from all perception models."""
+        if self._depth_model is not None:
+            self._depth_model.unload()
+        if self._sam_model is not None:
+            self._sam_model.unload()
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

@@ -116,10 +116,11 @@ class TestPhase1ModelLoading:
         """Test 2.1: Qwen2.5-VL loads without OOM."""
         import torch
 
-        # Try smaller model first for testing (7B instead of 32B)
+        # Try smaller model first (7B fits in fp16 on 48GB)
+        # quantize_8bit=False because bitsandbytes is incompatible with PyTorch 2.4
         for model_id in ["Qwen/Qwen2.5-VL-7B-Instruct", "Qwen/Qwen2.5-VL-32B-Instruct"]:
             try:
-                vlm = QwenVLM(model_id=model_id, quantize_8bit=True)
+                vlm = QwenVLM(model_id=model_id, quantize_8bit=False)
                 vlm.load()
 
                 mem = vlm.get_memory_usage()
@@ -152,7 +153,7 @@ class TestPhase1ModelLoading:
 
         # Step 2: load Qwen
         try:
-            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=True)
+            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=False)
             vlm.load()
             mem = vlm.get_memory_usage()
             print(f"  After Qwen: {mem['peak_gb']:.1f}GB")
@@ -165,7 +166,7 @@ class TestPhase1ModelLoading:
     def test_2_3_basic_room_description(self, test_room_image):
         """Test 2.3: Qwen describes a room coherently."""
         try:
-            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=True)
+            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=False)
             vlm.load()
         except Exception as e:
             pytest.skip(f"Qwen not available: {e}")
@@ -184,7 +185,7 @@ class TestPhase1ModelLoading:
     def test_2_4_batch_candidate_scoring(self, test_room_image):
         """Test 2.4: Qwen differentiates good from bad placement positions."""
         try:
-            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=True)
+            vlm = QwenVLM(model_id="Qwen/Qwen2.5-VL-7B-Instruct", quantize_8bit=False)
             vlm.load()
         except Exception as e:
             pytest.skip(f"Qwen not available: {e}")

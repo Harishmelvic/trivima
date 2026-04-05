@@ -122,6 +122,81 @@ def check_collision_with_margin(
     return False, None
 
 
+def query_clearance(
+    grid,
+    position: np.ndarray,
+    cell_size: float = 0.05,
+    max_steps: int = 40,
+) -> float:
+    """Compute minimum distance from position to nearest non-empty cell via BFS.
+
+    From unified_pipeline_theory.md §1.3:
+    BFS outward through empty cells until hitting a solid/surface cell.
+    Returns clearance_distance in meters. Used for spacing scores —
+    positions farther from existing objects score higher.
+
+    Args:
+        grid: CellGrid (Python dict or native)
+        position: (3,) world position
+        cell_size: base cell size in meters
+        max_steps: max BFS radius in cells (default 40 = 2m at 5cm)
+
+    Returns:
+        Distance in meters to nearest non-empty cell. Returns max_steps * cell_size
+        if no object found within search radius.
+    """
+    from collections import deque
+
+    ix = int(np.floor(position[0] / cell_size))
+    iy = int(np.floor(position[1] / cell_size))
+    iz = int(np.floor(position[2] / cell_size))
+
+    # Check if starting position is already inside an object
+    start_key = (ix, iy, iz)
+    if isinstance(grid, dict):
+        if start_key in grid and grid[start_key].get("density", 0) > 0.3:
+            return 0.0
+    else:
+        idx = grid.find_at_position(position[0], position[1], position[2])
+        if idx is not None and idx >= 0:
+            geo = grid.get_geo(idx)
+            if geo.density > 0.3:
+                return 0.0
+
+    # BFS in 6 directions (±X, ±Y, ±Z)
+    directions = [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]
+    visited = {start_key}
+    queue = deque([(ix, iy, iz, 0)])  # (x, y, z, distance_in_cells)
+
+    while queue:
+        cx, cy, cz, dist = queue.popleft()
+        if dist >= max_steps:
+            continue
+
+        for dx, dy, dz in directions:
+            nx, ny, nz = cx + dx, cy + dy, cz + dz
+            nkey = (nx, ny, nz)
+
+            if nkey in visited:
+                continue
+            visited.add(nkey)
+
+            # Check if this cell is occupied
+            if isinstance(grid, dict):
+                if nkey in grid and grid[nkey].get("density", 0) > 0.3:
+                    return (dist + 1) * cell_size
+            else:
+                nidx = grid.find_at_cell_coords(0, nx, ny, nz)
+                if nidx is not None and nidx >= 0:
+                    geo = grid.get_geo(nidx)
+                    if geo.density > 0.3:
+                        return (dist + 1) * cell_size
+
+            queue.append((nx, ny, nz, dist + 1))
+
+    return max_steps * cell_size  # nothing found within radius
+
+
 def slide_along_wall(
     movement: np.ndarray,
     wall_normal: np.ndarray,

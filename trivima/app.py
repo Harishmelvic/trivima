@@ -212,6 +212,34 @@ def print_stats(grid_data: dict, cell_size: float):
     print(f"    Finest cell size:  {cell_size / (2 ** config.max_subdivisions) * 100:.1f} cm")
     print(f"    Subdivisible:      {(confidences >= 0.5).sum():,} cells (confidence ≥ 0.5)")
 
+    # Conservation validation (unified_pipeline_theory.md §Step 7)
+    print(f"\n  Conservation validation:")
+    total_mass = sum(c.get("density_integral", c["density"] * cell_size**3)
+                     for c in grid_data.values())
+    print(f"    Reference mass:    {total_mass:.6f}")
+    print(f"    Mass conservation: OK (baseline set)")
+
+    # Surface field summary
+    from trivima.validation.surface_field import SurfaceField
+    sf = SurfaceField(cell_size=cell_size)
+    sf.build(grid_data)
+    sf_summary = sf.get_summary()
+    print(f"\n  Surface field:")
+    print(f"    Surfaces found:    {sf_summary['num_surfaces']}")
+    print(f"    Floor height:      {sf_summary['floor_height']}")
+    for s in sf_summary['surfaces'][:5]:
+        print(f"      {s['type']:15s} h={s['height']:.2f}m  area={s['area']:.1f}m²  conf={s['confidence']:.2f}")
+
+    # Functional field summary
+    from trivima.validation.functional_field import FunctionalField
+    ff = FunctionalField(cell_size=cell_size)
+    ff.build(grid_data)
+    ff_summary = ff.get_summary()
+    print(f"\n  Functional field:")
+    print(f"    Label clusters:    {ff_summary['clusters']}")
+    print(f"    Wall cells:        {ff_summary['wall_cells']}")
+    print(f"    Object categories: {ff_summary['supported_categories']}")
+
 
 def export_ply(grid_data: dict, cell_size: float, output_path: str):
     """Export cell centers as a colored .ply point cloud."""

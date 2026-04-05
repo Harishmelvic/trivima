@@ -104,14 +104,12 @@ def build_cell_grid(
         # Semantic label: majority vote
         cell["label"] = int(np.bincount(labels[point_ids].astype(np.int64)).argmax())
 
-        # Confidence: combine point density signal with propagated per-point confidence
-        # point_density_confidence: more points → more reliable
+        # Confidence: multiplicative product (unified_pipeline_theory.md §1.8)
+        # conf = conf_points × conf_depth_propagated
+        # Semantic penalty is already folded into propagated_conf from failure_modes.py
         density_conf = min(1.0, n / 10.0)  # saturates at 10 points
-        # propagated_confidence: min of per-point confidences (worst case)
-        # Using mean instead of min to avoid single outlier tanking the cell
         propagated_conf = float(confidence[point_ids].mean())
-        # Combined: geometric mean (both must be high for high confidence)
-        cell["confidence"] = float(np.sqrt(density_conf * propagated_conf))
+        cell["confidence"] = float(density_conf * propagated_conf)
 
         # Collision margin: larger for low-confidence cells
         if cell["confidence"] < 0.5:

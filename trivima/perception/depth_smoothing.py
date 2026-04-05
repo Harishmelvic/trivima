@@ -85,7 +85,7 @@ def _bilateral_cv2(
         smoothed = cv2.bilateralFilter(
             depth,
             d=d,
-            sigmaColor=color_sigma / 255.0 * depth.ptp(),  # scale to depth range
+            sigmaColor=color_sigma / 255.0 * (depth.max() - depth.min()),  # scale to depth range
             sigmaSpace=spatial_sigma,
         )
         return smoothed

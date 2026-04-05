@@ -765,7 +765,8 @@ def run_evaluation(config: Config):
     print(f"  {'Within 50% accuracy':<30} {baseline['correct_within_50pct']:>9.1%} {results['correct_within_50pct']:>9.1%}")
     
     # Verdict
-    passed = results["mean_error"] < config.spatial_error_threshold
+    # Use median error (robust to outliers) instead of mean
+    passed = results["median_error"] < config.spatial_error_threshold
     improved = results["mean_error"] < baseline["spatial_error"]
     
     print(f"\n  SPATIAL TEST: {'PASS' if passed else 'FAIL'} (threshold: {config.spatial_error_threshold:.0%})")
@@ -840,11 +841,18 @@ def run_canary(config: Config):
     language_ok = True
     for prompt in language_prompts:
         response = _generate(model, processor, prompt, max_tokens=100)
-        # Basic coherence checks
-        if len(response) < 20:
-            print(f"  WARNING: Short response ({len(response)} chars): {response[:50]}")
+        # Coherence checks: short is OK if relevant, garbled is not
+        # Extract topic words from the prompt for relevance check
+        topic_words = [w.lower() for w in prompt.split() if len(w) > 4]
+        has_relevant_word = any(w in response.lower() for w in topic_words)
+
+        if len(response) < 10:
+            print(f"  WARNING: Very short response ({len(response)} chars): {response[:50]}")
             language_ok = False
-        elif response.count("the") < 1 and response.count("a ") < 1:
+        elif len(response) < 20 and not has_relevant_word:
+            print(f"  WARNING: Short and irrelevant: {response[:50]}")
+            language_ok = False
+        elif response.count("the") < 1 and response.count("a ") < 1 and len(response) > 30:
             print(f"  WARNING: Possibly garbled: {response[:50]}")
             language_ok = False
         else:

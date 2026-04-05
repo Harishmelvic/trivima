@@ -205,6 +205,33 @@ SAM labels trigger material-specific corrections before cell construction:
 | Sky | Extreme depth (50-1000m) | Exclude from grid, render as skybox |
 | Specular | Oscillating depth | Moderate confidence=0.4, extra depth smoothing |
 
+### 12. VLM Design Intelligence (Stage 4 — from vlm_architecture_theory.md)
+
+**Model:** Qwen2.5-VL-32B with 3D-RoPE + SpatialVLM knowledge distillation.
+
+**3D-RoPE** replaces 2D pixel positional encoding with metric 3D coordinates from the depth map. Patches that are close in physical space (5cm apart) have high mutual attention, even if they're far apart in the image. Zero parameters, zero latency — just different input values to the existing RoPE computation. Falls back to 2D for low-confidence cells (glass, mirrors).
+
+**SpatialVLM distillation** transfers quantitative spatial reasoning (distances, heights, room dimensions) into Qwen during training, not inference. Only Qwen runs at inference — no second model, no extra memory, no extra latency. Achieves 85-90% of SpatialVLM's spatial precision.
+
+**Invocation points** (never in the render loop):
+- Environment classification (~2s, once per scene)
+- Aesthetic re-ranking (two modes: logit scoring ~200ms for heatmap, full generative ~2-5s with explanations)
+- Auto-furnishing planning (~3-5s, once per scene)
+- Object style matching (~200-500ms per object)
+
+**Asymmetric dependency:** The validation system (physics) works without the VLM. The VLM cannot work without the validation system. Physics never depends on neural network judgment.
+
+**Training:** LoRA (rank 32, alpha 64) on frozen Qwen base. Phase 1: spatial distillation (3-5 days, 4×A100). Phase 2: aesthetic fine-tuning (3-5 days, 4×A100). Total: $3-5K.
+
+**Module structure:**
+```
+trivima/vlm/
+├── qwen_vlm.py          # Model loading, 3D-RoPE injection, inference
+├── aesthetic_ranker.py   # Re-ranks validation field candidates
+├── auto_furnish.py       # Gap detection + placement planning
+└── training/             # Distillation data gen + LoRA fine-tuning
+```
+
 ---
 
 ## Data Flow

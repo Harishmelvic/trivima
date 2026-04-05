@@ -99,12 +99,14 @@ class PerceptionPipeline:
         h, w = image.shape[:2]
 
         # --- Step 1: Depth Pro ---
+        if self._depth_model._model is None:
+            self._depth_model.load()
         depth_result = self._depth_model.estimate(image)
         depth_raw = depth_result["depth"]
         focal_length = depth_result["focal_length"]
         depth_confidence = depth_result["confidence_proxy"]
 
-        # Free GPU memory before next model
+        # Free GPU memory before next model (re-loads on next call if needed)
         self._depth_model.unload()
         torch.cuda.empty_cache()
 
@@ -117,7 +119,8 @@ class PerceptionPipeline:
         )
 
         # --- Step 3: SAM segmentation ---
-        self._sam_model.load()  # reload after depth freed memory
+        if self._sam_model._model is None:
+            self._sam_model.load()
         labels_2d, label_names = self._sam_model.segment(image)
         self._sam_model.unload()
         torch.cuda.empty_cache()

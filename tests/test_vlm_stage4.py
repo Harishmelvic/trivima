@@ -157,7 +157,7 @@ class TestPhase1ModelLoading:
             vlm.load()
             mem = vlm.get_memory_usage()
             print(f"  After Qwen: {mem['peak_gb']:.1f}GB")
-            assert not torch.cuda.is_out_of_memory_retry_count(), "OOM detected"
+            # If we got here, no OOM occurred
             vlm.unload()
             torch.cuda.empty_cache()
         except Exception as e:

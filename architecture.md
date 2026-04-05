@@ -347,13 +347,16 @@ Runs: Everything at maximum speed, 30B-A3B + perception models simultaneously, c
 | GPUs | 4× A100 80GB SXM | $5.56/hr RunPod |
 | Full distillation training | 6-11 days | $2,500-4,500 |
 
-### Serverless (Inference Only)
+### Serverless Production (Inference Only)
 | Component | Spec | Cost |
 |---|---|---|
-| GPU | 48GB (A40/A6000, high supply) | $0.00034/s |
-| Idle | $0.00/hr | — |
-| Per request | ~$0.01-0.03 | — |
+| GPU | H100 80GB (SXM + PCIe) | $0.00076/s |
+| Idle | **$0.00/hr** | — |
+| Per request | ~$0.02-0.05 | — |
 | Cold start | ~15-30s (image cached) | — |
+| Capability | All models simultaneously — Depth Pro + SAM 3 + Qwen3-VL + AI texturing | — |
+
+H100 80GB enables: 30B-A3B VLM without CPU offloading, all perception models loaded simultaneously (no sequential unload/reload), cinematic rendering at Tier 4, and fastest inference across the board.
 
 ---
 
@@ -395,7 +398,7 @@ Runs: Everything at maximum speed, 30B-A3B + perception models simultaneously, c
 | AI texturing (production) | StreamDiffusion + ControlNet |
 | VLM | Qwen3-VL-8B-Instruct + LoRA distillation |
 | Training data | ScanNet, Matterport3D, 3D-FRONT |
-| Deployment | RunPod serverless (A40/A100/H100) |
+| Deployment | RunPod serverless H100 80GB ($0/hr idle) |
 
 ---
 
@@ -412,7 +415,7 @@ Runs: Everything at maximum speed, 30B-A3B + perception models simultaneously, c
 
 **Distillation validated:** 44.4% → 88.0% spatial accuracy with 2,898 synthetic pairs, zero aesthetic degradation.
 
-**Serverless endpoint:** `0gmi4sn8cc0scc` on RunPod, 48GB GPU, idle at $0/hr.
+**Serverless endpoint:** `0gmi4sn8cc0scc` on RunPod, **H100 80GB**, idle at $0/hr.
 
 ---
 

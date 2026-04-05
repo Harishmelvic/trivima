@@ -1,0 +1,33 @@
+name: trivima
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.11
+  - pytorch>=2.1
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - numpy>=1.24
+  - cmake>=3.18
+  - ninja
+  - gcc_linux-64  # for Linux cloud builds
+  - gxx_linux-64
+  - pip
+  - pip:
+    - nanobind>=2.0
+    - scikit-build-core>=0.10
+    - open3d>=0.18
+    - opencv-python>=4.8
+    - moderngl>=5.12
+    - moderngl-window[glfw,imgui]>=3.0
+    - msgpack>=1.0
+    - Pillow>=10.0
+    - transformers>=4.36
+    - timm>=0.9
+    - pytest>=8.0
+    - black
+    - ruff

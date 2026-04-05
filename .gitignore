@@ -1,0 +1,32 @@
+# Build
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyd
+*.so
+*.o
+*.obj
+
+# Data
+data/checkpoints/
+data/training_pairs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Env
+.env
+*.env
+
+# CUDA
+*.cubin
+*.fatbin
+*.ptx

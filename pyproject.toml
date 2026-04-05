@@ -1,0 +1,38 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "trivima"
+version = "0.1.0"
+description = "Differential-Integral Cell Architecture for 3D scene reconstruction"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.1",
+    "open3d>=0.18",
+    "opencv-python>=4.8",
+    "moderngl>=5.12",
+    "moderngl-window[glfw,imgui]>=3.0",
+    "msgpack>=1.0",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+perception = [
+    "transformers>=4.36",
+    "timm>=0.9",
+    "segment-anything-2",
+]
+dev = [
+    "pytest>=8.0",
+    "black",
+    "ruff",
+]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.args = ["-DBUILD_TESTING=ON"]
+
+[tool.scikit-build.cmake.define]
+CMAKE_CUDA_ARCHITECTURES = "80;90"

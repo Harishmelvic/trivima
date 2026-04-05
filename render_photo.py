@@ -202,17 +202,25 @@ def main():
     prog = ctx.program(vertex_shader=VERTEX_SHADER, fragment_shader=FRAGMENT_SHADER)
     cube_v, cube_n, cube_i = unit_cube()
 
-    # ALL attributes are float — no int attributes (ModernGL/NVIDIA bug)
-    vao = ctx.vertex_array(prog, [
-        (ctx.buffer(cube_v.tobytes()), "3f", "in_position"),
-        (ctx.buffer(cube_n.tobytes()), "3f", "in_normal"),
-        (ctx.buffer(cell_pos.tobytes()), "3f/i", "inst_position"),
-        (ctx.buffer(cell_col.tobytes()), "3f/i", "inst_color"),
-        (ctx.buffer(cell_nrm.tobytes()), "3f/i", "inst_normal"),
-        (ctx.buffer(cell_size.tobytes()), "f/i", "inst_size"),
-        (ctx.buffer(cell_dens.tobytes()), "f/i", "inst_density"),
-        (ctx.buffer(cell_ids.tobytes()), "f/i", "inst_cell_id"),
-    ], index_buffer=ctx.buffer(cube_i.tobytes()))
+    # Build VAO with only attributes the compiled shader actually uses
+    # (GLSL optimizer removes unused attributes → KeyError if we try to bind them)
+    active_attrs = set(prog)
+    buffers = [(ctx.buffer(cube_v.tobytes()), "3f", "in_position")]
+    if "in_normal" in active_attrs:
+        buffers.append((ctx.buffer(cube_n.tobytes()), "3f", "in_normal"))
+    inst_bufs = [
+        (cell_pos, "3f/i", "inst_position"),
+        (cell_col, "3f/i", "inst_color"),
+        (cell_nrm, "3f/i", "inst_normal"),
+        (cell_size, "f/i", "inst_size"),
+        (cell_dens, "f/i", "inst_density"),
+        (cell_ids, "f/i", "inst_cell_id"),
+    ]
+    for data, fmt, name in inst_bufs:
+        if name in active_attrs:
+            buffers.append((ctx.buffer(data.tobytes()), fmt, name))
+
+    vao = ctx.vertex_array(prog, buffers, index_buffer=ctx.buffer(cube_i.tobytes()))
 
     W, H = 1280, 720
     fbo = ctx.simple_framebuffer((W, H))

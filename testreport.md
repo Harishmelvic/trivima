@@ -1,9 +1,14 @@
 # Trivima Test Report — Stage 2
 
 **Date:** 2026-04-05
-**Platform:** Windows 11 / Python 3.13.12 / NumPy 2.x
-**Duration:** 25.9 seconds
-**Result:** 29/29 PASSED
+
+| Environment | Platform | Python | GPU | Tests | Passed | Time |
+|---|---|---|---|---|---|---|
+| Local | Windows 11 | 3.13.12 | — | 38 | 38 | 72s |
+| RunPod | Linux (Ubuntu 22.04) | 3.11.10 | RTX A6000 48GB | 38 | 38 | 80s |
+
+**Result: 38/38 PASSED on both platforms**
+(4 GPU model tests deferred — require Depth Pro/SAM checkpoints downloaded)
 
 ---
 
@@ -12,13 +17,15 @@
 | Phase | Tests | Passed | Failed | Critical | Time |
 |-------|-------|--------|--------|----------|------|
 | 1 — Cell Struct | 5 | 5 | 0 | 3/3 | <1s |
-| 2 — Perception | 5 | 5 | 0 | 0/0* | ~2s |
+| 2 — Perception | 5 | 5 | 0 | 0/0 | ~2s |
 | 3 — Cell Grid | 10 | 10 | 0 | 5/5 | ~20s |
 | 4 — Shell Extension | 3 | 3 | 0 | 0/0 | ~1s |
 | LOD Subdivision | 5 | 5 | 0 | — | <1s |
-| **Total** | **29** | **29** | **0** | **8/8** | **25.9s** |
+| Image-based (no model) | 9 | 9 | 0 | — | ~50s |
+| Image-based (needs model) | 4 | — | — | — | deferred* |
+| **Total run** | **38** | **38** | **0** | **8/8** | **72-80s** |
 
-*Phase 2 perception-model tests (3.1, 3.4, 3.5, 3.9, 3.10) require GPU + Depth Pro/SAM — deferred to serverless run.
+*4 GPU model tests (3.1, 3.5, 3.9, 3.10) require Depth Pro/SAM checkpoints downloaded. Code is written and ready — will run when models are installed.
 
 ---
 

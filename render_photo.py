@@ -241,8 +241,9 @@ def main():
     print("[4/4] Writing views...")
     for i, (name, yaw, pitch) in enumerate(views):
         view = view_matrix(cam_pos, yaw, pitch)
-        prog["u_projection"].write(proj.tobytes())
-        prog["u_view"].write(view.tobytes())
+        # OpenGL expects column-major; numpy is row-major → transpose
+        prog["u_projection"].write(proj.T.tobytes())
+        prog["u_view"].write(view.T.tobytes())
         prog["u_light_dir"].value = (0.3, 0.8, 0.4)
         prog["u_camera_pos"].value = tuple(cam_pos.astype(np.float32))
 

@@ -626,8 +626,9 @@ class TrivimRenderer(mglw.WindowConfig):
         view = self.camera.view_matrix()
         
         # Set uniforms
-        self.prog['u_projection'].write(proj.tobytes())
-        self.prog['u_view'].write(view.tobytes())
+        # OpenGL expects column-major; numpy is row-major → transpose
+        self.prog['u_projection'].write(proj.T.tobytes())
+        self.prog['u_view'].write(view.T.tobytes())
         self.prog['u_light_dir'].value = (0.4, 0.8, 0.3)
         self.prog['u_camera_pos'].value = tuple(self.camera.position.astype(np.float32))
         self.prog['u_render_mode'].value = self.render_mode

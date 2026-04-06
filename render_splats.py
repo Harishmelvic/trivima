@@ -124,7 +124,8 @@ def main():
 
     for i, (name, yaw, pitch) in enumerate(views):
         mvp = (proj @ view_mat(cam, yaw, pitch)).astype(np.float32)
-        prog["u_mvp"].write(mvp.tobytes())
+        # OpenGL expects column-major; numpy is row-major → transpose
+        prog["u_mvp"].write(mvp.T.tobytes())
         fbo.use()
         fbo.clear(0.15, 0.15, 0.2, 1.0)
         ctx.enable(moderngl.DEPTH_TEST)

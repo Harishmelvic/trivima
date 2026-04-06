@@ -71,7 +71,15 @@ class Unpatch2D(nn.Module):
 
 class DiTBlock(nn.Module):
     """Transformer block with adaptive layer norm."""
-    def __init__(self, dim, n_heads=12, mlp_ratio=4.0):
+    def __init__(self, dim, n_heads=None, mlp_ratio=4.0):
+        if n_heads is None:
+            # Auto-select n_heads based on dim
+            for nh in [16, 12, 8, 4]:
+                if dim % nh == 0:
+                    n_heads = nh
+                    break
+            else:
+                n_heads = 1
         super().__init__()
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
         self.attn = nn.MultiheadAttention(dim, n_heads, batch_first=True)
@@ -93,12 +101,15 @@ class DiTBlock(nn.Module):
 
 
 class CrossViewAttention(nn.Module):
-    """Cross-attention between different views.
-
-    Each view's tokens attend to all other views' tokens.
-    This enforces multi-view consistency — views see each other.
-    """
-    def __init__(self, dim, n_heads=12):
+    """Cross-attention between different views."""
+    def __init__(self, dim, n_heads=None):
+        if n_heads is None:
+            for nh in [16, 12, 8, 4]:
+                if dim % nh == 0:
+                    n_heads = nh
+                    break
+            else:
+                n_heads = 1
         super().__init__()
         self.norm = nn.LayerNorm(dim)
         self.cross_attn = nn.MultiheadAttention(dim, n_heads, batch_first=True)
@@ -163,8 +174,15 @@ class MultiViewDiT(nn.Module):
         patch_size=16,
         embed_dim=768,
         depth=12,
-        n_heads=12,
+        n_heads=None,
     ):
+        if n_heads is None:
+            for nh in [16, 12, 8, 4]:
+                if embed_dim % nh == 0:
+                    n_heads = nh
+                    break
+            else:
+                n_heads = 1
         super().__init__()
         self.num_views = num_views
         self.img_size = img_size

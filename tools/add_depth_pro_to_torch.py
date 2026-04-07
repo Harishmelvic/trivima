@@ -97,10 +97,13 @@ class DepthBackend:
             with torch.autocast(self.device, dtype=torch.float16):
                 outputs = self.model(**inputs)
             d = outputs.predicted_depth.squeeze().float().cpu().numpy()
-            # DepthAnything returns INVERSE depth — convert to metric-ish
-            # Pixel value is "disparity" / "inverse depth"; bigger = closer
-            d = d - d.min() + 1e-3
-            d = 1.0 / d  # convert to depth-like
+            # DepthAnything returns INVERSE depth (disparity)
+            # Normalize disparity to a stable range first to avoid 1/tiny → huge values
+            d_lo, d_hi = np.percentile(d, [2, 98])
+            d = np.clip(d, d_lo, d_hi)
+            d = (d - d_lo) / max(d_hi - d_lo, 1e-6)  # disparity in [0, 1]
+            # Convert to depth: small disparity → far. Use d_metric = 1 / (eps + disp)
+            d = 1.0 / (0.05 + d)  # depth in roughly [0.95, 20]
             return d
 
 
@@ -166,15 +169,26 @@ def add_depth_to_scene(path: str, backend: DepthBackend, target_size: int = 256,
     pkg["depths"] = torch.stack(depths)
     pkg["depth_mask"] = torch.stack(masks)
 
-    # Update scene_scale to depth-based estimate
+    # Clip depths to a sane indoor range to kill outliers
+    pkg["depths"] = pkg["depths"].clamp(0.1, 30.0)
+
+    # Compute scene_scale as 95th percentile, but use NUMPY (torch.quantile chokes on >16M elements)
     valid = pkg["depths"][pkg["depth_mask"]]
     if valid.numel() > 0:
-        pkg["scene_scale"] = float(valid.quantile(0.95).item())
+        # Subsample if huge to keep quantile fast and torch.quantile happy
+        if valid.numel() > 1_000_000:
+            idx = torch.randperm(valid.numel())[:1_000_000]
+            valid_s = valid[idx]
+        else:
+            valid_s = valid
+        pkg["scene_scale"] = float(np.percentile(valid_s.numpy(), 95))
 
     torch.save(pkg, path)
+    vmin = float(valid.min()) if valid.numel() else 0.0
+    vmax = float(valid.max()) if valid.numel() else 0.0
     print(
         f"  {os.path.basename(path)}: added {len(depths)} depths, "
-        f"range=[{valid.min():.2f}, {valid.max():.2f}], scale={pkg['scene_scale']:.2f}m"
+        f"range=[{vmin:.2f}, {vmax:.2f}]m, scale={pkg['scene_scale']:.2f}m"
     )
     return True
 

@@ -46,8 +46,12 @@ def render_one_view(sim, sensor_h: int, sensor_w: int):
 
 
 def quat_to_R(q) -> np.ndarray:
-    """Habitat quaternion (with w,x,y,z accessors) → 3x3 rotation matrix."""
-    w, x, y, z = q.real, q.imaginary[0], q.imaginary[1], q.imaginary[2]
+    """Habitat quaternion (numpy-quaternion: w,x,y,z accessors) → 3x3 rotation matrix."""
+    # numpy-quaternion exposes w,x,y,z directly
+    w = float(q.w)
+    x = float(q.x)
+    y = float(q.y)
+    z = float(q.z)
     R = np.array(
         [
             [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],

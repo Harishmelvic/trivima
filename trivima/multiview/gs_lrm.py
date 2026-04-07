@@ -52,16 +52,28 @@ class ResidualConvUnit(nn.Module):
 
 
 class FeatureFusionBlock(nn.Module):
-    """One DPT fusion stage: combine skip features and upsample 2x."""
+    """One DPT fusion stage: combine skip features and upsample 2x.
 
-    def __init__(self, dim: int):
+    Skip is auto-resized to x's spatial size before adding (handles the
+    case where ViT layers all share the same token grid but x is at a
+    higher decoder resolution).
+
+    `with_skip=False` for the first (deepest) block: no rcu1 since there
+    is no skip connection at the bottom of the decoder.
+    """
+
+    def __init__(self, dim: int, with_skip: bool = True):
         super().__init__()
-        self.rcu1 = ResidualConvUnit(dim)
+        self.with_skip = with_skip
+        if with_skip:
+            self.rcu1 = ResidualConvUnit(dim)
         self.rcu2 = ResidualConvUnit(dim)
         self.out_conv = nn.Conv2d(dim, dim, 1)
 
     def forward(self, x: torch.Tensor, skip: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if skip is not None:
+        if skip is not None and self.with_skip:
+            if skip.shape[-2:] != x.shape[-2:]:
+                skip = F.interpolate(skip, size=x.shape[-2:], mode="bilinear", align_corners=False)
             x = x + self.rcu1(skip)
         x = self.rcu2(x)
         x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
@@ -83,14 +95,16 @@ class DPTDecoder(nn.Module):
         # Project ViT tokens to decoder hidden dim at each stage
         self.proj = nn.ModuleList([nn.Conv2d(vit_dim, hidden_dim, 1) for _ in range(4)])
 
-        # Per-stage upsampling to reach 1, 1/2, 1/4, 1/8 of full resolution
-        # (DINOv2 patch size 14 → token grid is H/14 x W/14, so we upsample 4 times to reach near-full res)
-        # Stage 0 (deepest): keep at native, 1
-        # Stage 1: 2x
-        # Stage 2: 4x
-        # Stage 3 (shallowest): 8x
-        # Final fusion outputs at 8x token res, then we bilinear-up to image res
-        self.fusion = nn.ModuleList([FeatureFusionBlock(hidden_dim) for _ in range(4)])
+        # 4 fusion stages, each upsamples 2x. The first (deepest) has no skip
+        # input so we drop its rcu1 to avoid dead parameters.
+        self.fusion = nn.ModuleList(
+            [
+                FeatureFusionBlock(hidden_dim, with_skip=False),  # stage 0: deepest, no skip
+                FeatureFusionBlock(hidden_dim, with_skip=True),
+                FeatureFusionBlock(hidden_dim, with_skip=True),
+                FeatureFusionBlock(hidden_dim, with_skip=True),
+            ]
+        )
 
     def forward(self, tokens: list[torch.Tensor]) -> torch.Tensor:
         """tokens: list of 4 (B, vit_dim, h, w) feature maps from ViT layers (deep → shallow).
